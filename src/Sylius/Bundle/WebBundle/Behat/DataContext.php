@@ -179,10 +179,10 @@ class DataContext extends BehatContext implements KernelAwareInterface
     public function thereAreOrders(TableNode $table)
     {
         $manager = $this->getEntityManager();
-        $orderBuilder = $this->getService('sylius.builder.order');
+        $orderRepository = $this->getRepository('order');
 
         foreach ($table->getHash() as $data) {
-            $order = $orderBuilder->create()->getOrder();
+            $order = $orderRepository->createNew();
 
             $address = $this->createAddress($data['address']);
 
@@ -210,18 +210,27 @@ class DataContext extends BehatContext implements KernelAwareInterface
     public function orderHasFollowingItems($number, TableNode $items)
     {
         $manager = $this->getEntityManager();
-        $orderBuilder = $this->getService('sylius.builder.order');
+        $orderItemRepository = $this->getRepository('order_item');
 
-        $orderBuilder->modify($this->orders[$number]);
+        $order = $this->orders[$number];
 
         foreach ($items->getHash() as $data) {
             $product = $this->findOneByName('product', trim($data['product']));
             $quantity = $data['quantity'];
 
-            $orderBuilder->add($product->getMasterVariant(), $product->getMasterVariant()->getPrice(), $quantity);
+            $item = $orderItemRepository->createNew();
+
+            $item->setVariant($product->getMasterVariant());
+            $item->setUnitPrice($product->getMasterVariant()->getPrice());
+            $item->setQuantity($quantity);
+
+            $order->addItem($item);
         }
 
-        $manager->persist($orderBuilder->getOrder());
+        $order->calculateTotal();
+        $order->complete();
+
+        $manager->persist($order);
         $manager->flush();
     }
 
@@ -392,7 +401,7 @@ class DataContext extends BehatContext implements KernelAwareInterface
         $product = $this->findOneByName('product', $productName);
         $manager = $this->getEntityManager();
 
-        $this->getService('sylius.variant_generator')->generate($product);
+        $this->getService('sylius.generator.variant')->generate($product);
 
         foreach ($product->getVariants() as $variant) {
             $variant->setPrice($product->getMasterVariant()->getPrice());
@@ -479,7 +488,7 @@ class DataContext extends BehatContext implements KernelAwareInterface
                 'presentation' => isset($data['presentation']) ? $data['presentation'] : $data['name']
             );
             if ($choices) {
-                $additionalData['options'] = array('choices' => $choices);
+                $additionalData['configuration'] = array('choices' => $choices);
             }
             $this->thereIsProperty($data['name'], $additionalData);
         }
@@ -501,6 +510,7 @@ class DataContext extends BehatContext implements KernelAwareInterface
 
         $property = $repository->createNew();
         $property->setName($name);
+
         foreach ($additionalData as $key => $value) {
             $property->{'set'.\ucfirst($key)}($value);
         }
